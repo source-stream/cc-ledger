@@ -9,6 +9,17 @@ DEST_HOOKS="$HOME/.claude/hooks"
 DEST_LEDGER="$HOME/.claude/ledger"
 SETTINGS="$HOME/.claude/settings.json"
 
+# Optional reinforcement hooks (off by default).
+WITH_PR_NUDGE=0
+WITH_SUBAGENT=0
+for arg in "$@"; do
+  case "$arg" in
+    --with-pr-nudge) WITH_PR_NUDGE=1 ;;
+    --with-subagent) WITH_SUBAGENT=1 ;;
+    *) echo "[cc-ledger] unknown option: $arg" >&2; exit 2 ;;
+  esac
+done
+
 if ! command -v python3 >/dev/null 2>&1; then
   echo "[cc-ledger] error: python3 is required but was not found on PATH." >&2
   exit 1
@@ -16,8 +27,8 @@ fi
 
 mkdir -p "$DEST_HOOKS" "$DEST_LEDGER"
 
-# Hooks
-cp "$SCRIPT_DIR/hooks/ledger_session_start.py" "$DEST_HOOKS/"
+# Hooks (copy all; only registered ones run).
+cp "$SCRIPT_DIR"/hooks/*.py "$DEST_HOOKS/"
 
 # Seed registry + protocol ONLY if absent (never clobber a real registry).
 if [ ! -f "$DEST_LEDGER/groups.json" ]; then
@@ -39,9 +50,29 @@ python3 "$SCRIPT_DIR/lib/settings_merge.py" add \
   --event SessionStart \
   --command "python3 ~/.claude/hooks/ledger_session_start.py"
 
+if [ "$WITH_PR_NUDGE" -eq 1 ]; then
+  python3 "$SCRIPT_DIR/lib/settings_merge.py" add \
+    --settings "$SETTINGS" \
+    --event PostToolUse \
+    --matcher Bash \
+    --command "python3 ~/.claude/hooks/ledger_pr_nudge.py"
+  echo "[cc-ledger] enabled PR-nudge (PostToolUse/Bash)"
+fi
+
+if [ "$WITH_SUBAGENT" -eq 1 ]; then
+  python3 "$SCRIPT_DIR/lib/settings_merge.py" add \
+    --settings "$SETTINGS" \
+    --event SubagentStart \
+    --command "python3 ~/.claude/hooks/ledger_subagent_start.py"
+  echo "[cc-ledger] enabled SubagentStart read-only briefing"
+fi
+
 cat <<EOF
 
 [cc-ledger] install complete.
+Optional reinforcement (re-run with these flags to enable; both off by default):
+  --with-pr-nudge   remind to post the PR milestone after 'gh pr create' / 'git push'
+  --with-subagent   inject a read-only ledger note when subagents are spawned
 Next steps:
   1. Edit $DEST_LEDGER/groups.json to describe your real groups (channels + match).
   2. In a work repo you want on the ledger, opt it in:
