@@ -17,8 +17,19 @@ python3 "$SCRIPT_DIR/lib/settings_merge.py" remove \
   --settings "$SETTINGS" \
   --event SessionStart \
   --command "python3 ~/.claude/hooks/ledger_session_start.py"
+python3 "$SCRIPT_DIR/lib/settings_merge.py" remove \
+  --settings "$SETTINGS" \
+  --event PostToolUse \
+  --command "python3 ~/.claude/hooks/ledger_pr_nudge.py"
+python3 "$SCRIPT_DIR/lib/settings_merge.py" remove \
+  --settings "$SETTINGS" \
+  --event SubagentStart \
+  --command "python3 ~/.claude/hooks/ledger_subagent_start.py"
 
-rm -f "$DEST_HOOKS/ledger_session_start.py"
+rm -f "$DEST_HOOKS/ledger_session_start.py" \
+      "$DEST_HOOKS/ledger_pr_nudge.py" \
+      "$DEST_HOOKS/ledger_subagent_start.py" \
+      "$DEST_HOOKS/_ledger_common.py"
 
-echo "[cc-ledger] removed the SessionStart hook entry and hook file."
+echo "[cc-ledger] removed cc-ledger hook entries and hook files."
 echo "[cc-ledger] left $DEST_LEDGER intact (your registry + protocol). Delete it manually if you want a full wipe."
