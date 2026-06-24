@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+# ledger-enable <group> [project]
+# Opt the current clone into the ledger: write a .ledger.json marker at the repo root
+# and exclude it locally via .git/info/exclude (NEVER .gitignore, which is shared).
+set -eu
+
+GROUP="${1:-}"
+PROJECT="${2:-}"
+if [ -z "$GROUP" ]; then
+  echo "usage: ledger-enable <group> [project]" >&2
+  exit 2
+fi
+
+ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+MARKER="$ROOT/.ledger.json"
+
+if [ -n "$PROJECT" ]; then
+  printf '{ "group": "%s", "project": "%s" }\n' "$GROUP" "$PROJECT" > "$MARKER"
+else
+  printf '{ "group": "%s" }\n' "$GROUP" > "$MARKER"
+fi
+
+# Exclude the marker locally (works for plain repos and worktrees).
+if git rev-parse --git-dir >/dev/null 2>&1; then
+  EXCL="$(git rev-parse --git-path info/exclude)"
+  mkdir -p "$(dirname "$EXCL")"
+  touch "$EXCL"
+  grep -qxF '.ledger.json' "$EXCL" || echo '.ledger.json' >> "$EXCL"
+fi
+
+# Validate the group against the registry (non-fatal warning only).
+REG="$HOME/.claude/ledger/groups.json"
+python3 - "$REG" "$GROUP" <<'PY' || true
+import json, sys
+reg, grp = sys.argv[1], sys.argv[2]
+try:
+    data = json.load(open(reg, encoding="utf-8"))
+    if grp not in data.get("groups", {}):
+        sys.stderr.write("[cc-ledger] warning: group '%s' is not in %s\n" % (grp, reg))
+except Exception as e:
+    sys.stderr.write("[cc-ledger] warning: could not read registry %s: %s\n" % (reg, e))
+PY
+
+echo "[cc-ledger] enabled: $MARKER"
