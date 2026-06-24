@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "groups": {
+    "acme": {
+      "channel": "#acme-ledger",
+      "description": "Acme multi-service platform (example group)",
+      "projects": {
+        "web": {
+          "match": ["acme-web"],
+          "role": "Front-end / application code"
+        },
+        "api": {
+          "match": ["acme-api"],
+          "role": "Backend API service"
+        },
+        "infra": {
+          "match": ["acme-infra", "acme-cdk"],
+          "role": "Cloud infrastructure (CDN, DNS, serverless)"
+        }
+      }
+    },
+    "example-single": {
+      "channel": "#example-ledger",
+      "description": "A single-project group (example)",
+      "projects": {
+        "app": {
+          "match": ["example-app"],
+          "role": "Application"
+        }
+      }
+    }
+  }
+}
