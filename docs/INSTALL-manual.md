@@ -1,7 +1,8 @@
-# Manual install (P1)
+# Manual install
 
-The automated `install.sh` lands in P2. Until then, install cc-ledger by hand. Every
-step is non-destructive and reversible.
+> Prefer the automated [`./install.sh`](INSTALL.md) — it does all of this idempotently
+> with a backed-up, structural settings merge. Use these steps only if you'd rather
+> install by hand. Every step is non-destructive and reversible.
 
 > Prerequisites: `python3` on your PATH, and the Slack MCP already enabled in Claude
 > Code (the hook injects instructions; Claude uses the Slack MCP to read/post).
