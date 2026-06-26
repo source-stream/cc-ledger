@@ -74,6 +74,23 @@ describe your real groups:
 `match` substrings are tested against a clone's git remote URL to auto-detect the project
 when the marker omits it. **This file is machine-local — never commit it.**
 
+### Monorepos (one remote, many sub-apps)
+
+Because `match` only sees the **remote URL**, sub-apps of a monorepo all share the same
+remote and **cannot be told apart by `match`**. Model each sub-app as its own project
+(give them the same `match`, anchored so it's unique vs. sibling repos — e.g.
+`["monorepo.git"]`) and select the active one with the marker's **explicit `project`**:
+
+```sh
+ledger-enable example-monorepo monorepo-frontend   # this clone is working the frontend
+ledger-enable example-monorepo monorepo-search-api # …switch it to the search API later
+```
+
+A monorepo clone that omits `project` resolves to `unknown` by design, so always set it.
+Two clones/worktrees of the same monorepo can each declare a different sub-app, and each
+session's injected sibling list then shows what the other is working on. See the
+`example-monorepo` group in [`config/groups.example.json`](config/groups.example.json).
+
 ## Enable a clone
 
 ```sh
