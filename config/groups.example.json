@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "groups": {
     "acme": {
       "channel": "#acme-ledger",
@@ -7,15 +7,63 @@
       "projects": {
         "web": {
           "match": ["acme-web"],
-          "role": "Front-end / application code"
+          "role": "Front-end / application code",
+          "responsibility": {
+            "summary": "Front-end / application code",
+            "keywords": ["UI", "components", "pages", "client", "styling"]
+          }
         },
         "api": {
           "match": ["acme-api"],
-          "role": "Backend API service"
+          "role": "Backend API service",
+          "responsibility": {
+            "summary": "Backend API service",
+            "keywords": ["endpoints", "auth", "business logic", "data access"]
+          }
         },
         "infra": {
           "match": ["acme-infra", "acme-cdk"],
-          "role": "Cloud infrastructure (CDN, DNS, serverless)"
+          "role": "Cloud infrastructure (CDN, DNS, serverless)",
+          "responsibility": {
+            "summary": "Cloud infrastructure",
+            "keywords": ["CDN", "DNS", "serverless", "deploy", "IAM"]
+          }
+        }
+      }
+    },
+    "nomadfoods": {
+      "channel": "#nomad-ledger",
+      "description": "Nomad foods platform (example group): monorepo + ETL + infra. Shows the responsibility/areas fields used to route new work to the right repo.",
+      "projects": {
+        "nomadfoods": {
+          "match": ["nomadfoods.git"],
+          "role": "Customer-facing monorepo",
+          "responsibility": {
+            "summary": "Customer-facing web platform & content/search services",
+            "keywords": ["UI", "frontend", "components", "content", "search"]
+          },
+          "areas": {
+            "web": "Next.js storefront & pages",
+            "storybook": "shared UI component library",
+            "content-api": "CMS / content delivery service",
+            "search-api": "product search & indexing"
+          }
+        },
+        "nomadfoods-migration-etl": {
+          "match": ["nomadfoods-migration-etl"],
+          "role": "Data ETL pipeline",
+          "responsibility": {
+            "summary": "Data import & load pipelines",
+            "keywords": ["data import", "ETL", "ingestion", "batch load", "source data"]
+          }
+        },
+        "nomadfoods-cdk": {
+          "match": ["nomadfoods-cdk"],
+          "role": "Infrastructure as code",
+          "responsibility": {
+            "summary": "AWS CDK infrastructure & deploy pipelines",
+            "keywords": ["infra", "CDK", "IAM", "deploy", "AWS resources"]
+          }
         }
       }
     },

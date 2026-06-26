@@ -57,7 +57,7 @@ describe your real groups:
 
 ```json
 {
-  "version": 1,
+  "version": 2,
   "groups": {
     "acme": {
       "channel": "#acme-ledger",
@@ -73,6 +73,46 @@ describe your real groups:
 
 `match` substrings are tested against a clone's git remote URL to auto-detect the project
 when the marker omits it. **This file is machine-local — never commit it.**
+
+### Architecture map (route new work to the right repo)
+
+So a session knows *what each sibling repo is responsible for* — and lands new
+functionality in the architecturally correct repo — add two **optional** per-project
+fields (both absent ⇒ the map falls back to `role`, so older `version: 1` registries keep
+working unchanged):
+
+- **`responsibility`** — `{ "summary": <one line>, "keywords": [<routing terms>] }`.
+  The session matches a task against the keywords to pick the owning repo. Rendered as
+  `summary (kw, kw, …)`.
+- **`areas`** — `{ <sub-area>: <one line> }` for a monorepo project. Sibling lines show
+  the area *names* only; when the session is **in** that monorepo it additionally gets the
+  full per-area detail, so the change lands in the right sub-area.
+
+```json
+"nomadfoods": {
+  "match": ["nomadfoods.git"],
+  "role": "Customer-facing monorepo",
+  "responsibility": {
+    "summary": "Customer-facing web platform & content/search services",
+    "keywords": ["UI", "frontend", "content", "search"]
+  },
+  "areas": {
+    "web": "Next.js storefront & pages",
+    "content-api": "CMS / content delivery service",
+    "search-api": "product search & indexing"
+  }
+}
+```
+
+See the `nomadfoods` group in [`config/groups.example.json`](config/groups.example.json)
+for a full worked example (monorepo + ETL + infra). The map is kept terse (one line per
+project) and is truncated with a `+N more` note if a very large group would exceed its
+char budget.
+
+> **Already installed?** `protocol.md` is seeded **only if absent**, so an existing
+> `~/.claude/ledger/protocol.md` won't gain the architecture map automatically. The hook
+> stays backward-compatible (the old template renders fine), but to opt in, refresh it:
+> `cp protocol/template.md ~/.claude/ledger/protocol.md` (back up any local edits first).
 
 ### Monorepos (one remote, many sub-apps)
 
@@ -90,6 +130,10 @@ A monorepo clone that omits `project` resolves to `unknown` by design, so always
 Two clones/worktrees of the same monorepo can each declare a different sub-app, and each
 session's injected sibling list then shows what the other is working on. See the
 `example-monorepo` group in [`config/groups.example.json`](config/groups.example.json).
+
+If instead **one** clone covers the whole monorepo, model it as a single project with an
+[`areas`](#architecture-map-route-new-work-to-the-right-repo) map (see the `nomadfoods`
+example) rather than splitting it into per-sub-app projects.
 
 ## Enable a clone
 

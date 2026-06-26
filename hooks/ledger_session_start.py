@@ -30,6 +30,8 @@ def main():
         .replace("{{PROJECT}}", ctx["project"])
         .replace("{{ROLE}}", ctx["role"])
         .replace("{{BRANCH}}", ctx["branch"])
+        .replace("{{ARCHMAP}}", ctx["archmap_text"])
+        .replace("{{OWN_AREAS}}", ctx["own_areas_text"])
         .replace("{{SIBLINGS}}", ctx["siblings_text"])
     )
     L.emit("SessionStart", rendered)
