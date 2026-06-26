@@ -28,6 +28,24 @@
           "role": "Application"
         }
       }
+    },
+    "example-monorepo": {
+      "channel": "#monorepo-ledger",
+      "description": "A monorepo group (example): one git remote, many sub-apps. Because match is tested only against the remote URL, every sub-app shares the same match and is selected by the marker's explicit `project` field — not by match. A monorepo clone that omits `project` resolves to `unknown` by design, so always set it (e.g. `ledger-enable example-monorepo monorepo-frontend`).",
+      "projects": {
+        "monorepo-frontend": {
+          "match": ["monorepo.git"],
+          "role": "Frontend (monorepo: apps/frontend)"
+        },
+        "monorepo-content-api": {
+          "match": ["monorepo.git"],
+          "role": "Content API (monorepo: apps/content-api)"
+        },
+        "monorepo-search-api": {
+          "match": ["monorepo.git"],
+          "role": "Search API (monorepo: apps/search-api)"
+        }
+      }
     }
   }
 }
