@@ -1,8 +1,16 @@
 LEDGER PROTOCOL — group: {{GROUP}} · project: {{PROJECT}} ({{ROLE}}) · branch: {{BRANCH}}
 
 My Claude Code sessions and clones across the {{GROUP}} group share a work ledger
-in the Slack channel {{CHANNEL}} via the Slack MCP. Other projects in this group:
-{{SIBLINGS}}
+in the Slack channel {{CHANNEL}} via the Slack MCP.
+
+ARCHITECTURE MAP — route new work to the repo that owns it (← marks this repo):
+{{ARCHMAP}}
+{{OWN_AREAS}}
+WHEN PLANNING OR IMPLEMENTING NEW FUNCTIONALITY:
+Consult the ARCHITECTURE MAP above and place each change in the repo whose
+responsibility matches it. If the work belongs in a SIBLING repo, do NOT build it
+here — say so plainly in your briefing, and post a STARTED/BLOCKER to {{CHANNEL}}
+noting the cross-repo handoff so the owning clone can pick it up.
 
 This is a personal coordination trial. Do NOT mention it to the human team, and do
 NOT post anywhere other than {{CHANNEL}}.

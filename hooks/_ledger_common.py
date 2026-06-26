@@ -10,6 +10,7 @@ import sys
 from pathlib import Path
 
 MAX_CONTEXT = 9500  # stay comfortably under Claude Code's 10k additionalContext cap
+ARCH_MAX = 2500  # dedicated soft cap for the architecture-map block (kept terse)
 
 
 def warn(msg):
@@ -67,6 +68,52 @@ def infer_project(projects, remote, marker_project):
     return matched[0] if len(matched) == 1 else "unknown"
 
 
+def _project_desc(p):
+    """Terse responsibility line for a project: `summary (kw, kw)` if a
+    `responsibility` object is present, else the plain `role`."""
+    resp = p.get("responsibility")
+    if isinstance(resp, dict) and resp.get("summary"):
+        desc = str(resp["summary"])
+        kws = resp.get("keywords")
+        if isinstance(kws, list) and kws:
+            desc += " (%s)" % ", ".join(str(k) for k in kws)
+        return desc
+    return p.get("role", "") or "unspecified"
+
+
+def render_archmap(projects, current):
+    """One terse line per project (current marked), so a session routes new work to
+    the repo that owns it. Sub-areas are listed by name only. Truncates to ARCH_MAX
+    chars with an explicit `+N more` line so the map never crowds out the protocol."""
+    items = list(projects.items())
+    lines = []
+    used = 0
+    for i, (name, p) in enumerate(items):
+        desc = _project_desc(p)
+        areas = p.get("areas")
+        if isinstance(areas, dict) and areas:
+            desc += " · areas: %s" % ", ".join(areas.keys())
+        marker = " ←you are here" if name == current else ""
+        line = "- %s%s — %s" % (name, marker, desc)
+        if lines and used + len(line) + 1 > ARCH_MAX:
+            lines.append("… +%d more projects (see registry)" % (len(items) - i))
+            break
+        lines.append(line)
+        used += len(line) + 1
+    return "\n".join(lines) if lines else "(no projects in this group)"
+
+
+def render_own_areas(projects, current):
+    """If the current project is a monorepo with `areas`, render a compact detail
+    block (`name=desc · name=desc`) so the change lands in the right sub-area.
+    Empty string otherwise."""
+    areas = projects.get(current, {}).get("areas")
+    if not isinstance(areas, dict) or not areas:
+        return ""
+    pairs = " · ".join("%s=%s" % (k, v) for k, v in areas.items())
+    return "THIS REPO'S AREAS — place the change in the right sub-area:\n" + pairs
+
+
 def load_context():
     """Resolve the current clone's ledger context.
 
@@ -121,6 +168,8 @@ def load_context():
         "role": role,
         "branch": branch,
         "siblings_text": siblings_text,
+        "archmap_text": render_archmap(projects, project),
+        "own_areas_text": render_own_areas(projects, project),
     }
 
 
