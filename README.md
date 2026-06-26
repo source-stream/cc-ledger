@@ -49,6 +49,25 @@ cd cc-ledger
 See [docs/INSTALL.md](docs/INSTALL.md) (and the [manual steps](docs/INSTALL-manual.md)).
 Requires `python3` and the Slack MCP enabled in Claude Code.
 
+## Set up a repo — `/ledger-init` (recommended)
+
+After installing, the fastest way to put a repo on the ledger is the guided wizard. From
+inside Claude Code, in the repo you want to enable:
+
+```
+/ledger-init
+```
+
+It detects the current state, discovers sibling repos in the parent directory, derives each
+project's `match` / `role` / architecture fields for you to confirm, offers to clone any
+sibling that isn't checked out (into the shared parent dir), structurally merges the group
+into your registry (backing it up first), writes the git-excluded marker, and finishes with a
+dry run of exactly what a future session will load. Re-running it on an already-configured
+repo just reports the setup and changes nothing.
+
+Prefer to do it by hand? The two sections below (editing the registry and `ledger-enable`)
+are the manual equivalent.
+
 ## Edit your registry
 
 `install.sh` seeds `~/.claude/ledger/groups.json` from

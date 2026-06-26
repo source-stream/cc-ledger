@@ -6,6 +6,7 @@ set -eu
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 DEST_HOOKS="$HOME/.claude/hooks"
 DEST_LEDGER="$HOME/.claude/ledger"
+DEST_SKILL="$HOME/.claude/skills/ledger-init"
 SETTINGS="$HOME/.claude/settings.json"
 
 if ! command -v python3 >/dev/null 2>&1; then
@@ -31,5 +32,9 @@ rm -f "$DEST_HOOKS/ledger_session_start.py" \
       "$DEST_HOOKS/ledger_subagent_start.py" \
       "$DEST_HOOKS/_ledger_common.py"
 
-echo "[cc-ledger] removed cc-ledger hook entries and hook files."
+# Remove the setup wizard skill (leave the skills/ dir itself alone).
+rm -f "$DEST_SKILL/SKILL.md" "$DEST_SKILL/ledger-init"
+rmdir "$DEST_SKILL" 2>/dev/null || true
+
+echo "[cc-ledger] removed cc-ledger hook entries, hook files, and the /ledger-init skill."
 echo "[cc-ledger] left $DEST_LEDGER intact (your registry + protocol). Delete it manually if you want a full wipe."
