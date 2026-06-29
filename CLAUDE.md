@@ -74,9 +74,11 @@ The brief's "Open decisions" (hosting/name, real channel + `match` substrings,
 machine-local vs shared registry, whether to build the optional PR-nudge, Python vs
 bash+jq) are unresolved. Stop and ask rather than assuming.
 
-## Planned layout & tooling (from the brief, not yet created)
+## Layout & tooling
 
-`bin/` (ledger-enable/disable) · `hooks/` (session_start, optional pr_nudge) · `config/`
-(groups.example.json) · `protocol/template.md` · `test/` (fixtures + `test_hook.py`) ·
-`install.sh` / `uninstall.sh`. Tests are stdlib-based against fixture repos/markers/
-registries. No build/lint/test commands exist yet — establish them as part of P1/P4.
+`bin/` (ledger-enable/disable, ledger-init) · `hooks/` (session_start, _ledger_common,
+optional pr_nudge / subagent_start) · `lib/` (settings_merge.py) · `config/`
+(groups.example.json) · `protocol/template.md` · `skills/ledger-init/` (the `/ledger-init`
+wizard) · `test/` (fixtures + `test_hook.py`, `test_init.py`, `test_install.py`,
+`test_enable.py`, `test_nudge.py`) · `install.sh` / `uninstall.sh`. Tests are stdlib-based
+against fixture repos/markers/registries; run them with `python3 -m pytest test/ -q`.
