@@ -1,0 +1,667 @@
+#!/usr/bin/env python3
+"""cc-ledger setup helper — the deterministic "hands" of the /ledger-init wizard.
+
+Python 3 standard library only; cross-platform; quotes paths; NEVER crashes a session.
+Each subcommand does ONE idempotent thing and prints a single JSON object to stdout for
+the skill (Claude) to read. Mutations are backed up and structural — never string concat.
+
+Subcommands:
+  detect                         classify the current setup state (read-only)
+  discover                       scan the parent dir for sibling git repos (read-only)
+  derive --path P                draft role/responsibility/keywords/areas for one repo
+  apply-registry --group-json F  structurally merge one group into groups.json (backup first)
+  enable --root P --group G [--project X]   write marker + .git/info/exclude (idempotent)
+  clone --url U --dest D         guarded git clone into a confirmed destination
+  dry-run [--root P]             run the real SessionStart hook and echo what it injects
+
+Exit code is 0 whenever the helper ran (even when it reports a handled error in JSON);
+2 only for a usage error. The wizard reads `ok`/`state`/`error` from the JSON, never the
+exit code, so a recoverable problem never derails the conversation.
+"""
+import argparse
+import datetime
+import importlib.util
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+
+# ----------------------------------------------------------------------------------
+# Reuse the hook's helpers as the single source of truth when we can find them
+# (source tree or installed), with tiny vendored fallbacks so the helper is robust
+# even when run in isolation. Behaviour parity is asserted by test/test_init.py.
+# ----------------------------------------------------------------------------------
+def _load_common():
+    here = Path(__file__).resolve()
+    candidates = [
+        here.parent.parent / "hooks" / "_ledger_common.py",
+        Path.home() / ".claude" / "hooks" / "_ledger_common.py",
+    ]
+    for c in candidates:
+        try:
+            if c.is_file():
+                spec = importlib.util.spec_from_file_location("_ledger_common", str(c))
+                mod = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(mod)
+                return mod
+        except Exception:
+            continue
+    return None
+
+
+_L = _load_common()
+
+
+def sh(args):
+    """Run a command, returning stripped stdout or '' on any failure."""
+    if _L:
+        return _L.sh(args)
+    try:
+        return subprocess.check_output(
+            args, text=True, stderr=subprocess.DEVNULL, timeout=10
+        ).strip()
+    except Exception:
+        return ""
+
+
+def repo_root(cwd=None):
+    out = sh(["git", "-C", str(cwd or os.getcwd()), "rev-parse", "--show-toplevel"])
+    return out or str(cwd or os.getcwd())
+
+
+def registry_path():
+    if _L:
+        return _L.registry_path()
+    return Path(
+        os.environ.get("CC_LEDGER_REGISTRY")
+        or (Path.home() / ".claude" / "ledger" / "groups.json")
+    )
+
+
+def infer_project(projects, remote, marker_project):
+    if _L:
+        return _L.infer_project(projects, remote, marker_project)
+    if marker_project:
+        return marker_project
+    if not remote:
+        return "unknown"
+    matched = [
+        n for n, p in projects.items()
+        if any(s and s in remote for s in p.get("match", []))
+    ]
+    return matched[0] if len(matched) == 1 else "unknown"
+
+
+def installed_hook_path():
+    return Path.home() / ".claude" / "hooks" / "ledger_session_start.py"
+
+
+def remote_of(path):
+    return sh(["git", "-C", str(path), "remote", "get-url", "origin"])
+
+
+def is_git_repo(path):
+    return bool(sh(["git", "-C", str(path), "rev-parse", "--git-dir"]))
+
+
+def repo_name(url_or_path):
+    """Last path component of a git URL or path, with a trailing .git stripped."""
+    s = str(url_or_path).strip().rstrip("/")
+    s = re.split(r"[/:]", s)[-1] if s else s
+    if s.endswith(".git"):
+        s = s[:-4]
+    return s
+
+
+def out(obj, code=0):
+    sys.stdout.write(json.dumps(obj, indent=2) + "\n")
+    return code
+
+
+# ----------------------------------------------------------------------------------
+# detect — classify the current state (read-only)
+# ----------------------------------------------------------------------------------
+def cmd_detect(args):
+    root = repo_root(args.cwd)
+    remote = remote_of(root)
+    branch = sh(["git", "-C", root, "rev-parse", "--abbrev-ref", "HEAD"]) or None
+    marker_file = Path(root) / ".ledger.json"
+    installed = installed_hook_path().is_file()
+
+    ev = {
+        "root": root,
+        "remote": remote or None,
+        "branch": branch,
+        "registry_path": str(registry_path()),
+        "installed": installed,
+        "marker": None,
+        "group": None,
+        "project": None,
+    }
+
+    # Registry: present? readable?
+    reg_obj, reg_ok, reg_exists = None, False, registry_path().is_file()
+    if reg_exists:
+        try:
+            reg_obj = json.loads(registry_path().read_text(encoding="utf-8"))
+            reg_ok = isinstance(reg_obj, dict)
+        except Exception as e:
+            ev["registry_error"] = str(e)
+    groups = (reg_obj or {}).get("groups", {}) if reg_ok else {}
+
+    # Malformed registry trumps everything: refuse to act on an unparseable file.
+    if reg_exists and not reg_ok:
+        ev["state"] = "S6_malformed_registry"
+        return out({"ok": True, **ev})
+
+    # Marker present?
+    if marker_file.is_file():
+        try:
+            m = json.loads(marker_file.read_text(encoding="utf-8"))
+            if not isinstance(m, dict):
+                raise ValueError("marker is not a JSON object")
+        except Exception as e:
+            ev["state"] = "S5_malformed_marker"
+            ev["marker_error"] = str(e)
+            ev["marker_raw"] = _safe_read(marker_file)
+            return out({"ok": True, **ev})
+
+        gkey = m.get("group")
+        ev["marker"] = m
+        ev["group"] = gkey
+        if not gkey:
+            ev["state"] = "S5_malformed_marker"
+            ev["marker_error"] = "missing 'group'"
+            return out({"ok": True, **ev})
+
+        grp = groups.get(gkey)
+        if not grp:
+            ev["state"] = "S2_group_missing"
+            return out({"ok": True, **ev})
+
+        projects = grp.get("projects", {})
+        project = infer_project(projects, remote, m.get("project"))
+        ev["project"] = project
+        ev["channel"] = grp.get("channel")
+        if project == "unknown":
+            ev["state"] = "S3_project_unresolved"
+            ev["candidate_projects"] = list(projects.keys())
+        else:
+            ev["state"] = "S4_configured"
+            ev["role"] = projects.get(project, {}).get("role")
+        return out({"ok": True, **ev})
+
+    # No marker. Does any registered group already claim this remote?
+    claim = _group_claiming(groups, remote)
+    if claim:
+        ev["state"] = "S1_registry_only"
+        ev["group"] = claim[0]
+        ev["project"] = claim[1]
+        ev["channel"] = groups[claim[0]].get("channel")
+    else:
+        ev["state"] = "S0_fresh"
+    return out({"ok": True, **ev})
+
+
+def _group_claiming(groups, remote):
+    """Return (group_key, project_key) if exactly one project across all groups matches
+    the remote, else None. Used to spot an already-registered repo with no marker yet."""
+    if not remote:
+        return None
+    hits = []
+    for gk, g in groups.items():
+        for pk, p in g.get("projects", {}).items():
+            if any(s and s in remote for s in p.get("match", [])):
+                hits.append((gk, pk))
+    return hits[0] if len(hits) == 1 else None
+
+
+def _safe_read(path, limit=2000):
+    try:
+        return path.read_text(encoding="utf-8")[:limit]
+    except Exception:
+        return ""
+
+
+# ----------------------------------------------------------------------------------
+# discover — propose sibling git repos in the parent directory (read-only)
+# ----------------------------------------------------------------------------------
+def cmd_discover(args):
+    root = Path(repo_root(args.cwd))
+    parent = root.parent
+    found = []
+    try:
+        children = sorted(p for p in parent.iterdir() if p.is_dir())
+    except Exception as e:
+        return out({"ok": True, "parent": str(parent), "siblings": [], "error": str(e)})
+    for child in children:
+        if child.resolve() == root.resolve():
+            continue
+        if not (child / ".git").exists():
+            continue
+        rem = remote_of(child)
+        found.append(
+            {
+                "path": str(child),
+                "name": child.name,
+                "remote": rem or None,
+                "match": [repo_name(rem or child.name)],
+                "monorepo": _looks_monorepo(child),
+                "language": _dominant_language(child),
+            }
+        )
+    return out({"ok": True, "parent": str(parent), "siblings": found})
+
+
+# ----------------------------------------------------------------------------------
+# derive — draft role/responsibility/keywords/areas for one repo (read-only)
+# ----------------------------------------------------------------------------------
+def cmd_derive(args):
+    path = Path(args.path).resolve()
+    if not path.is_dir():
+        return out({"ok": False, "error": "not a directory: %s" % path})
+    lang = _dominant_language(path)
+    mono = _looks_monorepo(path)
+    summary = _readme_summary(path) or _summary_from_signals(path, lang, mono)
+    keywords = _keywords_from_signals(path, lang, mono)
+    result = {
+        "ok": True,
+        "path": str(path),
+        "name": path.name,
+        "match": [repo_name(remote_of(path) or path.name)],
+        "role": _role_from_signals(lang, mono),
+        "responsibility": {"summary": summary, "keywords": keywords},
+        "monorepo": mono,
+    }
+    if mono:
+        result["areas"] = _areas_of(path)
+    return out(result)
+
+
+def _looks_monorepo(path):
+    for d in ("apps", "packages", "services"):
+        sub = path / d
+        try:
+            if sub.is_dir() and any(c.is_dir() for c in sub.iterdir()):
+                return True
+        except Exception:
+            pass
+    return False
+
+
+def _areas_of(path):
+    areas = {}
+    for d in ("apps", "packages", "services"):
+        sub = path / d
+        try:
+            if sub.is_dir():
+                for c in sorted(sub.iterdir()):
+                    if c.is_dir() and not c.name.startswith("."):
+                        areas[c.name] = "%s/%s" % (d, c.name)
+        except Exception:
+            pass
+    return areas
+
+
+_LANG_EXT = {
+    ".ts": "TypeScript", ".tsx": "TypeScript", ".js": "JavaScript", ".jsx": "JavaScript",
+    ".py": "Python", ".go": "Go", ".rs": "Rust", ".java": "Java", ".rb": "Ruby",
+    ".cs": "C#", ".php": "PHP", ".kt": "Kotlin", ".swift": "Swift",
+}
+
+
+def _dominant_language(path):
+    counts = {}
+    try:
+        for p in path.rglob("*"):
+            if ".git" in p.parts or "node_modules" in p.parts:
+                continue
+            lang = _LANG_EXT.get(p.suffix)
+            if lang:
+                counts[lang] = counts.get(lang, 0) + 1
+            if sum(counts.values()) > 4000:  # bail early on huge trees
+                break
+    except Exception:
+        pass
+    return max(counts, key=counts.get) if counts else None
+
+
+def _readme_summary(path):
+    for name in ("README.md", "README.rst", "README.txt", "README"):
+        f = path / name
+        if f.is_file():
+            try:
+                for line in f.read_text(encoding="utf-8", errors="replace").splitlines():
+                    s = line.strip().lstrip("#").strip()
+                    if s and not s.startswith("![") and not s.startswith("[!"):
+                        return s[:120]
+            except Exception:
+                pass
+    return None
+
+
+def _signals(path):
+    names = set()
+    try:
+        names = {c.name for c in path.iterdir()}
+    except Exception:
+        pass
+    return names
+
+
+def _has_cdk(path, names):
+    if "cdk.json" in names:
+        return True
+    lib = path / "lib"
+    try:
+        return lib.is_dir() and any(lib.glob("*-stack.ts"))
+    except Exception:
+        return False
+
+
+def _summary_from_signals(path, lang, mono):
+    n = _signals(path)
+    if _has_cdk(path, n):
+        return "AWS CDK infrastructure & deploy pipelines"
+    if {"serverless.yml", "serverless.yaml"} & n:
+        return "Serverless infrastructure & deploy"
+    if {"Dockerfile", "Chart.yaml"} & n or "terraform" in str(n).lower():
+        return "Infrastructure & deployment"
+    if mono:
+        return "Customer-facing platform (monorepo)"
+    if lang:
+        return "%s service" % lang
+    return "Project"
+
+
+def _role_from_signals(lang, mono):
+    if mono:
+        return "Customer-facing monorepo"
+    return ("%s code" % lang) if lang else "Application"
+
+
+def _keywords_from_signals(path, lang, mono):
+    kws = []
+    if lang:
+        kws.append(lang)
+    if mono:
+        kws += ["monorepo", "frontend", "components"]
+    n = _signals(path)
+    if "cdk.json" in n:
+        kws += ["infra", "CDK", "deploy"]
+    return kws[:6]
+
+
+# ----------------------------------------------------------------------------------
+# apply-registry — structural, backed-up merge of one group into groups.json
+# ----------------------------------------------------------------------------------
+def cmd_apply_registry(args):
+    spec_text = Path(args.group_json).read_text(encoding="utf-8") if args.group_json else sys.stdin.read()
+    try:
+        spec = json.loads(spec_text)
+    except Exception as e:
+        return out({"ok": False, "error": "invalid group JSON: %s" % e}, code=2)
+    gkey = spec.get("group")
+    gbody = spec.get("body")
+    if not gkey or not isinstance(gbody, dict):
+        return out({"ok": False, "error": "spec needs {'group': str, 'body': {...}}"})
+    remotes = spec.get("remotes") if isinstance(spec.get("remotes"), dict) else {}
+
+    reg = registry_path()
+    if reg.is_file():
+        try:
+            registry = json.loads(reg.read_text(encoding="utf-8"))
+            if not isinstance(registry, dict):
+                raise ValueError("registry root is not a JSON object")
+        except Exception as e:
+            # Refuse to merge into an unparseable registry — never clobber a real file.
+            return out({"ok": False, "error": "registry is malformed; not editing: %s" % e})
+    else:
+        registry = {"version": 2, "groups": {}}
+
+    registry.setdefault("version", 2)
+    groups = registry.setdefault("groups", {})
+    existing = groups.get(gkey)
+    merged = _deep_merge_group(existing, gbody) if isinstance(existing, dict) else gbody
+    _disambiguate_match(merged.get("projects", {}), remotes)
+
+    changed = groups.get(gkey) != merged
+    groups[gkey] = merged
+
+    backup = None
+    if changed:
+        reg.parent.mkdir(parents=True, exist_ok=True)
+        if reg.is_file():
+            stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+            backup = str(reg) + ".bak." + stamp
+            shutil.copy2(reg, backup)
+        reg.write_text(json.dumps(registry, indent=2) + "\n", encoding="utf-8")
+
+    return out({
+        "ok": True,
+        "changed": changed,
+        "group": gkey,
+        "backup": backup,
+        "registry_path": str(reg),
+        "projects": list(merged.get("projects", {}).keys()),
+    })
+
+
+def _deep_merge_group(existing, incoming):
+    """Merge `incoming` group body onto `existing`, preserving projects/keys the user
+    already has. Incoming values win for keys it sets; existing projects are never
+    dropped."""
+    result = json.loads(json.dumps(existing))  # deep copy
+    for k, v in incoming.items():
+        if k == "projects" and isinstance(v, dict):
+            projs = result.setdefault("projects", {})
+            for pk, pv in v.items():
+                if isinstance(projs.get(pk), dict) and isinstance(pv, dict):
+                    projs[pk].update(pv)
+                else:
+                    projs[pk] = pv
+        else:
+            result[k] = v
+    return result
+
+
+def _disambiguate_match(projects, remotes=None):
+    """A match token is tested as a plain substring of the git remote URL, so a token
+    that is a substring of a *sibling's* remote would mis-match that sibling's repo
+    (e.g. 'globex' also matches '…/globex-cdk.git'). When that collision exists,
+    anchor the token with a trailing '.git' so it only matches its own remote — but only
+    if doing so still matches THIS project's own remote, so we never silently break
+    resolution (mirrors the globex/globex-cdk convention in the example registry).
+
+    `remotes` (optional) maps project key -> remote URL. When provided, collisions and the
+    safety check use real remotes. Without it we fall back to comparing against sibling
+    project keys (the established '.git' heuristic), which keeps the common case correct.
+    """
+    remotes = remotes or {}
+    names = list(projects.keys())
+
+    def target_for(other):
+        return remotes.get(other) or other
+
+    for name, p in projects.items():
+        matches = p.get("match")
+        if not isinstance(matches, list):
+            continue
+        own = remotes.get(name)
+        new = []
+        for tok in matches:
+            if not isinstance(tok, str) or not tok:
+                new.append(tok)
+                continue
+            collides = any(
+                other != name and tok in target_for(other) for other in names
+            )
+            if collides and not tok.endswith(".git"):
+                cand = tok + ".git"
+                # only anchor if it still matches our own remote (when we know it)
+                if own is None or cand in own:
+                    tok = cand
+            new.append(tok)
+        p["match"] = new
+
+
+# ----------------------------------------------------------------------------------
+# enable — write the marker + .git/info/exclude (shared with bin/ledger-enable)
+# ----------------------------------------------------------------------------------
+def _bad_key(s):
+    return s is not None and bool(re.search(r'["\\\n\r]', s))
+
+
+def cmd_enable(args):
+    if _bad_key(args.group) or _bad_key(args.project):
+        return out({"ok": False, "error": "group/project may not contain quotes, "
+                    "backslashes, or newlines"})
+    root = Path(args.root or repo_root())
+    marker = root / ".ledger.json"
+    if args.project:
+        marker.write_text(
+            '{ "group": "%s", "project": "%s" }\n' % (args.group, args.project),
+            encoding="utf-8",
+        )
+    else:
+        marker.write_text('{ "group": "%s" }\n' % args.group, encoding="utf-8")
+
+    excluded = False
+    if is_git_repo(root):
+        excl = sh(["git", "-C", str(root), "rev-parse", "--git-path", "info/exclude"])
+        if excl:
+            excl_path = Path(excl)
+            if not excl_path.is_absolute():
+                excl_path = root / excl
+            excl_path.parent.mkdir(parents=True, exist_ok=True)
+            lines = (
+                excl_path.read_text(encoding="utf-8").splitlines()
+                if excl_path.is_file()
+                else []
+            )
+            if ".ledger.json" not in lines:
+                with excl_path.open("a", encoding="utf-8") as fh:
+                    fh.write(".ledger.json\n")
+            excluded = True
+
+    return out({
+        "ok": True,
+        "marker_path": str(marker),
+        "group": args.group,
+        "project": args.project,
+        "excluded": excluded,
+    })
+
+
+# ----------------------------------------------------------------------------------
+# clone — guarded git clone into a confirmed destination
+# ----------------------------------------------------------------------------------
+def cmd_clone(args):
+    url = args.url
+    dest = Path(args.dest)
+
+    if dest.exists():
+        try:
+            nonempty = any(dest.iterdir())
+        except Exception:
+            nonempty = True
+        if nonempty:
+            if is_git_repo(dest):
+                rem = remote_of(dest)
+                if repo_name(url) and repo_name(url) in (rem or ""):
+                    return out({"ok": True, "action": "adopted", "dest": str(dest),
+                                "remote": rem})
+                return out({"ok": False, "action": "conflict", "dest": str(dest),
+                            "remote": rem, "error": "destination is a different repo"})
+            return out({"ok": False, "action": "occupied", "dest": str(dest),
+                        "error": "destination exists and is not a git repo"})
+
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        p = subprocess.run(
+            ["git", "clone", url, str(dest)],
+            capture_output=True, text=True, timeout=600,
+        )
+    except Exception as e:
+        return out({"ok": False, "action": "clone_failed", "dest": str(dest),
+                    "error": str(e), "left_partial": dest.exists()})
+    if p.returncode == 0:
+        return out({"ok": True, "action": "cloned", "dest": str(dest)})
+    # Surface a classified, actionable error; never auto-remove the partial dir.
+    err = (p.stderr or "").strip()
+    return out({
+        "ok": False,
+        "action": "clone_failed",
+        "dest": str(dest),
+        "error": err[-500:],
+        "auth": bool(re.search(r"Permission denied|Authentication failed|publickey", err)),
+        "network": bool(re.search(r"Could not resolve host|unable to access|timed out", err)),
+        "left_partial": dest.exists(),
+    })
+
+
+# ----------------------------------------------------------------------------------
+# dry-run — run the real SessionStart hook and echo what it would inject
+# ----------------------------------------------------------------------------------
+def cmd_dry_run(args):
+    root = args.root or repo_root()
+    hook = installed_hook_path()
+    if not hook.is_file():
+        # fall back to the source tree (useful in dev / tests)
+        src = Path(__file__).resolve().parent.parent / "hooks" / "ledger_session_start.py"
+        hook = src if src.is_file() else hook
+    if not hook.is_file():
+        return out({"ok": False, "error": "SessionStart hook not found; run install.sh"})
+    try:
+        p = subprocess.run(
+            [sys.executable, str(hook)],
+            cwd=str(root), capture_output=True, text=True, timeout=15,
+        )
+    except Exception as e:
+        return out({"ok": False, "error": str(e)})
+    context = ""
+    if p.stdout.strip():
+        try:
+            context = json.loads(p.stdout)["hookSpecificOutput"]["additionalContext"]
+        except Exception:
+            context = ""
+    return out({
+        "ok": True,
+        "root": root,
+        "injects": bool(context),
+        "context": context,
+        "stderr": p.stderr.strip() or None,
+    })
+
+
+# ----------------------------------------------------------------------------------
+def main(argv=None):
+    ap = argparse.ArgumentParser(prog="ledger-init", description=__doc__)
+    sub = ap.add_subparsers(dest="cmd", required=True)
+
+    p = sub.add_parser("detect"); p.add_argument("--cwd"); p.set_defaults(fn=cmd_detect)
+    p = sub.add_parser("discover"); p.add_argument("--cwd"); p.set_defaults(fn=cmd_discover)
+    p = sub.add_parser("derive"); p.add_argument("--path", required=True); p.set_defaults(fn=cmd_derive)
+    p = sub.add_parser("apply-registry"); p.add_argument("--group-json"); p.set_defaults(fn=cmd_apply_registry)
+    p = sub.add_parser("enable")
+    p.add_argument("--root"); p.add_argument("--group", required=True); p.add_argument("--project")
+    p.set_defaults(fn=cmd_enable)
+    p = sub.add_parser("clone")
+    p.add_argument("--url", required=True); p.add_argument("--dest", required=True)
+    p.set_defaults(fn=cmd_clone)
+    p = sub.add_parser("dry-run"); p.add_argument("--root"); p.set_defaults(fn=cmd_dry_run)
+
+    args = ap.parse_args(argv)
+    try:
+        return args.fn(args)
+    except Exception as e:  # never crash; report and exit cleanly
+        sys.stdout.write(json.dumps({"ok": False, "error": "%s: %s" % (type(e).__name__, e)}) + "\n")
+        return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

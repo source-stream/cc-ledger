@@ -7,6 +7,7 @@ set -eu
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 DEST_HOOKS="$HOME/.claude/hooks"
 DEST_LEDGER="$HOME/.claude/ledger"
+DEST_SKILL="$HOME/.claude/skills/ledger-init"
 SETTINGS="$HOME/.claude/settings.json"
 
 # Optional reinforcement hooks (off by default).
@@ -25,10 +26,16 @@ if ! command -v python3 >/dev/null 2>&1; then
   exit 1
 fi
 
-mkdir -p "$DEST_HOOKS" "$DEST_LEDGER"
+mkdir -p "$DEST_HOOKS" "$DEST_LEDGER" "$DEST_SKILL"
 
 # Hooks (copy all; only registered ones run).
 cp "$SCRIPT_DIR"/hooks/*.py "$DEST_HOOKS/"
+
+# Setup wizard skill (/ledger-init) + its bundled helper, co-located so SKILL.md can
+# call it via ${CLAUDE_SKILL_DIR}/ledger-init.
+cp "$SCRIPT_DIR/skills/ledger-init/SKILL.md" "$DEST_SKILL/"
+cp "$SCRIPT_DIR/bin/ledger-init" "$DEST_SKILL/"
+chmod +x "$DEST_SKILL/ledger-init" 2>/dev/null || true
 
 # Seed registry + protocol ONLY if absent (never clobber a real registry).
 if [ ! -f "$DEST_LEDGER/groups.json" ]; then
@@ -74,8 +81,10 @@ Optional reinforcement (re-run with these flags to enable; both off by default):
   --with-pr-nudge   remind to post the PR milestone after 'gh pr create' / 'git push'
   --with-subagent   inject a read-only ledger note when subagents are spawned
 Next steps:
-  1. Edit $DEST_LEDGER/groups.json to describe your real groups (channels + match).
-  2. In a work repo you want on the ledger, opt it in:
-       $SCRIPT_DIR/bin/ledger-enable <group> [project]
-  3. Make sure the Slack MCP is enabled in Claude Code.
+  1. In a work repo you want on the ledger, run the guided setup from inside Claude Code:
+       /ledger-init
+     It detects state, discovers sibling repos, writes the registry + marker, and shows a
+     dry run of what future sessions will load. (Manual path: edit $DEST_LEDGER/groups.json
+     and run $SCRIPT_DIR/bin/ledger-enable <group> [project].)
+  2. Make sure the Slack MCP is enabled in Claude Code.
 EOF

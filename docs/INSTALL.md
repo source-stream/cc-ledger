@@ -23,7 +23,15 @@ Re-running `./install.sh` changes nothing.
 
 ## Enable a clone
 
-In a work repo you want on the ledger:
+### Guided (recommended): `/ledger-init`
+
+`install.sh` also installs a setup wizard skill. From inside Claude Code, in the repo you
+want on the ledger, run `/ledger-init`. It detects the current state, discovers sibling
+repos, derives the registry fields for you to confirm, offers to clone missing siblings,
+writes the registry + marker, and shows a dry run of what future sessions will load. It is
+idempotent — re-running on a configured repo changes nothing.
+
+### Manual: `ledger-enable`
 
 ```sh
 /path/to/cc-ledger/bin/ledger-enable <group> [project]

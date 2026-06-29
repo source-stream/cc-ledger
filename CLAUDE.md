@@ -4,11 +4,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Status
 
-This repo is **greenfield**: only `project-brief.md` and `.gitignore` exist. There is
-no code yet. `project-brief.md` is the authoritative implementation brief — read it in
-full before building. The notes here summarize its load-bearing decisions; the brief
-has the reference implementations, schemas, acceptance criteria, and the P1–P4 phased
-plan.
+The toolkit is **built** through P5: the `SessionStart` hook (+ optional PR-nudge /
+SubagentStart), the idempotent installer (`install.sh`, `lib/settings_merge.py`),
+`bin/ledger-enable` / `bin/ledger-disable`, the v2 registry (`config/groups.example.json`
+with `responsibility` / `areas`), the protocol template, the `/ledger-init` setup wizard
+(`skills/ledger-init/SKILL.md` + `bin/ledger-init`), and a stdlib test suite under `test/`.
+`project-brief.md` remains the authoritative brief — read it for schemas, acceptance
+criteria, and the P1–P4 plan; the notes here summarize its load-bearing decisions.
 
 ## What this is
 
