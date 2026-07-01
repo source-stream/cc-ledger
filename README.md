@@ -1,5 +1,7 @@
 # cc-ledger
 
+[![CI](https://github.com/source-stream/cc-ledger/actions/workflows/ci.yml/badge.svg)](https://github.com/source-stream/cc-ledger/actions/workflows/ci.yml)
+
 A small, shareable toolkit that gives Claude Code sessions a shared **work ledger** over
 Slack. Multiple clones/sessions working across a group of related repos post terse
 milestone entries to one Slack channel — and read that channel on startup — so they can
